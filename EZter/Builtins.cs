@@ -11,6 +11,7 @@ static class Builtins
         ["help"] = Help,
         ["define"] = Define,
         ["forget"] = Forget,
+        ["init"] = Init,
         ["commands"] = ListCustom,
         ["echo"] = args => { Output.Line(string.Join(' ', args)); return true; },
         ["time"] = _ => { Output.Line(DateTime.Now.ToString("HH:mm:ss")); return true; },
@@ -39,8 +40,9 @@ static class Builtins
               open <path>               open a file or folder/app with Windows
               run <program> [args...]   run an outside program and show its output
               define <name> <steps>     create your own command
+              init <file> [name]        turn a script into a command (.ezc) right away
               forget <name>             delete one of your commands
-              commands                  list your commands
+              commands                 list your commands
               exit                      quit EZter
 
             Custom commands:
@@ -82,6 +84,56 @@ static class Builtins
 
         Program.Store.Save(command);
         Output.Line($"Defined '{name}'. In a normal terminal: ez {name}");
+        return true;
+    }
+
+    static readonly Dictionary<string, string> LanguageByExtension = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".py"] = "python",
+        [".ps1"] = "powershell",
+        [".cmd"] = "cmd",
+        [".bat"] = "cmd",
+        [".js"] = "node",
+        [".cs"] = "csharp",
+    };
+
+    // init <file> [name]: copy a script into the commands folder as a .ezc command
+    static bool Init(List<string> args)
+    {
+        if (args.Count is < 1 or > 2)
+        {
+            Output.Line("Usage: init <file> [name]   e.g. init backup.py");
+            return false;
+        }
+
+        var file = args[0];
+        if (!File.Exists(file))
+        {
+            Output.Line($"File not found: {file}");
+            return false;
+        }
+        if (!LanguageByExtension.TryGetValue(Path.GetExtension(file), out var language))
+        {
+            Output.Line($"Don't know how to run '{Path.GetExtension(file)}' files. Supported: {string.Join(' ', LanguageByExtension.Keys)}");
+            return false;
+        }
+
+        var name = (args.Count == 2 ? args[1] : Path.GetFileNameWithoutExtension(file)).ToLowerInvariant();
+        if (Table.ContainsKey(name))
+        {
+            Output.Line($"'{name}' is a built-in command. Pick another name: init {file} <name>");
+            return false;
+        }
+        if (!CommandStore.IsValidName(name))
+        {
+            Output.Line("Command names can use letters, digits, '-' and '_' (up to 40 characters). Pass a name: init <file> <name>");
+            return false;
+        }
+
+        var command = new CustomCommand { Name = name, Description = $"From {Path.GetFileName(file)}" };
+        command.Steps.Add(new Step(StepKind.Code, File.ReadAllText(file), language));
+        Program.Store.Save(command);
+        Output.Line($"Created '{name}' from {Path.GetFileName(file)}. In a normal terminal: ez {name}");
         return true;
     }
 

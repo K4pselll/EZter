@@ -417,6 +417,7 @@ static class Editor
         var captured = new StringWriter();
         var folder = Directory.GetCurrentDirectory();
         bool ok;
+        var timer = System.Diagnostics.Stopwatch.StartNew();
 
         Output.Writer = captured;
         Output.Captured = true;
@@ -437,7 +438,9 @@ static class Editor
         }
 
         captured.WriteLine();
-        captured.WriteLine(ok ? "--- done ---" : "--- stopped: a step failed ---");
+        timer.Stop();
+        var took = timer.Elapsed.TotalSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        captured.WriteLine(ok ? $"--- done {took}s ---" : $"--- stopped: a step failed ({took}s) ---");
         ShowText(ok ? "Output" : "Output (failed)", captured.ToString());
     }
 

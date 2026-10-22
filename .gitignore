@@ -1,0 +1,7 @@
+bin/
+obj/
+commands/push.ezc
+commands/clone.ezc
+.vs/
+.vscode/
+*.user

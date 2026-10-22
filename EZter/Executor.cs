@@ -61,6 +61,7 @@ static class Executor
 
         foreach (var step in command.Steps)
         {
+            if (step.Kind != StepKind.Code && step.Text.TrimStart().StartsWith('#')) continue;
             var ok = step.Kind switch
             {
                 StepKind.Ez => Execute(Substitute(step.Text, args), depth + 1),
