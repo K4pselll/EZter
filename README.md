@@ -4,7 +4,7 @@ EZ lets you create a command with C#, cmd command, python, and node, your choice
 ## 2. Setup
 To setup EZ you need .NET 10.0 (required) and git
 1. Clone the repo with git.
-   ```bash
+   ```git
    git clone https://github.com/K4psell/EZter
    cd EZter
    ```
