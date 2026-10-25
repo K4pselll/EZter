@@ -9,11 +9,10 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace EZter;
 
-// The interactive editor: build commands out of EZ commands, outside commands and pieces of code
 static class Editor
 {
     static CustomCommand _current = new();
-    static string? _savedName;   // the name the command has on disk (null while it is new)
+    static string? _savedName;
     static string _snapshot = "";
 
     static List<string> _names = new();
@@ -33,7 +32,7 @@ static class Editor
         try
         {
             _app.Init();
-            _app.Keyboard.KeyBindings.Remove(Key.Q.WithCtrl); // quitting goes through our own check for unsaved changes
+            _app.Keyboard.KeyBindings.Remove(Key.Q.WithCtrl);
             var window = Build();
             ResetForm(new CustomCommand());
             RefreshCommands();
@@ -47,6 +46,8 @@ static class Editor
         }
         return 0;
     }
+
+    // ---- color palette ----
 
     static readonly Color Background = new(31, 30, 47);
     static readonly Color Border = new(178, 177, 195);
@@ -185,7 +186,6 @@ static class Editor
         _snapshot = Snapshot();
     }
 
-    // Copies what is typed in the fields into the command being edited
     static void Collect()
     {
         _current.Name = _nameField.Text.ToString()!.Trim().ToLowerInvariant();
@@ -200,7 +200,6 @@ static class Editor
 
     static bool IsDirty() => Snapshot() != _snapshot;
 
-    // True when it is fine to throw away what is on screen
     static bool ConfirmDiscard()
     {
         if (!IsDirty()) return true;
@@ -363,7 +362,6 @@ static class Editor
         RefreshSteps(to);
     }
 
-    // Asks for a step. Several lines of an EZ or outside command become several steps.
     static List<Step>? StepDialog(Step? existing)
     {
         var kind = new OptionSelector
