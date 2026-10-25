@@ -1,5 +1,11 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
-using Terminal.Gui;
+using Terminal.Gui.App;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.Views;
+using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace EZter;
 
@@ -18,148 +24,151 @@ static class Editor
     static TextField _nameField = null!;
     static TextField _descField = null!;
     static Label _status = null!;
+    static IApplication _app = null!;
 
     public static int Run()
     {
         Shims.Sync(Program.Store);
-        Application.Init();
+        _app = Application.Create();
         try
         {
-            ApplyTheme();
-            Build();
-            ApplyTheme(); // again, now that the views exist
+            _app.Init();
+            _app.Keyboard.KeyBindings.Remove(Key.Q.WithCtrl); // quitting goes through our own check for unsaved changes
+            var window = Build();
             ResetForm(new CustomCommand());
             RefreshCommands();
-            Application.MainLoop.Invoke(OfferPath);
-            Application.Run();
+            _app.Invoke(OfferPath);
+            _app.Run(window);
+            window.Dispose();
         }
         finally
         {
-            Application.Shutdown();
+            _app.Dispose();
         }
         return 0;
     }
 
-    // ---- theme: black background, white text, blue accent ----
+    static readonly Color Background = new(31, 30, 47);
+    static readonly Color Border = new(178, 177, 195);
+    static readonly Color Accent = new(139, 180, 242);
+    static readonly Color Text = new(137, 137, 154);
 
-    static ColorScheme Scheme(Color text, Color back, Color hot, Color focusText, Color focusBack) => new()
+    static readonly Scheme Theme = new()
     {
-        Normal = Application.Driver.MakeAttribute(text, back),
-        HotNormal = Application.Driver.MakeAttribute(hot, back),
-        Focus = Application.Driver.MakeAttribute(focusText, focusBack),
-        HotFocus = Application.Driver.MakeAttribute(focusText, focusBack),
-        Disabled = Application.Driver.MakeAttribute(Color.DarkGray, back),
+        Normal = new Attribute(Text, Background),
+        HotNormal = new Attribute(Accent, Background),
+        Focus = new Attribute(Background, Accent),
+        HotFocus = new Attribute(Background, Accent),
+        Active = new Attribute(Background, Accent),
+        HotActive = new Attribute(Background, Accent),
+        Highlight = new Attribute(Background, Accent),
+        Editable = new Attribute(Accent, Background),
+        ReadOnly = new Attribute(Text, Background),
+        Disabled = new Attribute(new Color(89, 89, 104), Background),
     };
 
-    static void ApplyTheme()
+    static readonly Scheme BorderTheme = new()
     {
-        // Terminal.Gui v1 has no DarkBlue/BrightWhite. Many terminal palettes render ANSI Blue as a light
-        // blue, so Black (dark navy in those palettes) is the background that gives the dark blue look.
-        Colors.Base = new ColorScheme
-        {
-            Normal = Application.Driver.MakeAttribute(Color.White, Color.Black),
-            Focus = Application.Driver.MakeAttribute(Color.Black, Color.Blue),
-            HotNormal = Application.Driver.MakeAttribute(Color.Blue, Color.Black),
-            HotFocus = Application.Driver.MakeAttribute(Color.Black, Color.Blue),
-            Disabled = Application.Driver.MakeAttribute(Color.DarkGray, Color.Black),
-        };
-        Colors.TopLevel = Colors.Base;
-        Colors.Dialog = Colors.Base;
-        Colors.Menu = Scheme(Color.White, Color.Black, Color.Blue, Color.Black, Color.Blue);
-        Colors.Error = Scheme(Color.White, Color.Red, Color.BrightYellow, Color.Black, Color.Gray);
-        if (Application.Top != null)
-            ForceScheme(Application.Top, Colors.Base);
-    }
+        Normal = new Attribute(Border, Background),
+        Focus = new Attribute(Border, Background),
+        Active = new Attribute(Border, Background),
+        HotNormal = new Attribute(Border, Background),
+        HotFocus = new Attribute(Border, Background),
+        HotActive = new Attribute(Border, Background),
+        Highlight = new Attribute(Border, Background),
+        Editable = new Attribute(Border, Background),
+        ReadOnly = new Attribute(Border, Background),
+        Disabled = new Attribute(Border, Background),
+    };
 
-    // Forces the scheme onto a view and everything inside it (the menu bar keeps its own look)
-    static void ForceScheme(View view, ColorScheme scheme)
+    static T Themed<T>(T view) where T : View
     {
-        if (view is MenuBar) return;
-        view.ColorScheme = scheme;
-        foreach (var child in view.Subviews)
-            ForceScheme(child, scheme);
+        view.SetScheme(Theme);
+        view.Border?.View?.SetScheme(BorderTheme);
+        return view;
     }
 
     // ---- layout ----
 
-    static void Build()
+    static Window Build()
     {
-        var top = Application.Top;
-        Application.QuitKey = Key.Null; // quitting goes through our own check for unsaved changes
-
         var menu = new MenuBar(new[]
         {
             new MenuBarItem("_File", new[]
             {
-                new MenuItem("_New command", "", NewCommand, null, null, Key.CtrlMask | Key.N),
-                new MenuItem("_Save", "", () => Save(), null, null, Key.CtrlMask | Key.S),
-                new MenuItem("_Delete command", "", DeleteCommand),
-                new MenuItem("_Quit", "", Quit, null, null, Key.CtrlMask | Key.Q),
+                new MenuItem("_New command", "", NewCommand, Key.N.WithCtrl),
+                new MenuItem("_Save", "", () => Save(), Key.S.WithCtrl),
+                new MenuItem("_Delete command", "", DeleteCommand, Key.Empty),
+                new MenuItem("_Quit", "", Quit, Key.Q.WithCtrl),
             }),
             new MenuBarItem("S_tep", new[]
             {
-                new MenuItem("_Add step", "", AddStep),
-                new MenuItem("_Edit step", "", EditSelectedStep),
-                new MenuItem("_Remove step", "", RemoveStep),
-                new MenuItem("Move _up", "", () => MoveStep(-1)),
-                new MenuItem("Move _down", "", () => MoveStep(1)),
+                new MenuItem("_Add step", "", AddStep, Key.Empty),
+                new MenuItem("_Edit step", "", EditSelectedStep, Key.Empty),
+                new MenuItem("_Remove step", "", RemoveStep, Key.Empty),
+                new MenuItem("Move _up", "", () => MoveStep(-1), Key.Empty),
+                new MenuItem("Move _down", "", () => MoveStep(1), Key.Empty),
             }),
             new MenuBarItem("_Run", new[]
             {
-                new MenuItem("_Run command", "", RunCurrent, null, null, Key.F5),
+                new MenuItem("_Run command", "", RunCurrent, Key.F5),
             }),
             new MenuBarItem("_Tools", new[]
             {
-                new MenuItem("_Add EZ to PATH", "", AddToPath),
-                new MenuItem("_Remove EZ from PATH", "", RemoveFromPath),
-                new MenuItem("Re_fresh EZ launchers", "", () => { Shims.Sync(Program.Store); SetStatus("Launchers refreshed."); }),
-                new MenuItem("_Open commands folder", "", OpenFolder),
+                new MenuItem("_Add EZ to PATH", "", AddToPath, Key.Empty),
+                new MenuItem("_Remove EZ from PATH", "", RemoveFromPath, Key.Empty),
+                new MenuItem("Re_fresh EZ launchers", "", () => { Shims.Sync(Program.Store); SetStatus("Launchers refreshed."); }, Key.Empty),
+                new MenuItem("_Open commands folder", "", OpenFolder, Key.Empty),
             }),
             new MenuBarItem("_Help", new[]
             {
-                new MenuItem("_About steps", "", ShowHelp),
+                new MenuItem("_About steps", "", ShowHelp, Key.Empty),
             }),
         });
 
-        var win = new Window("EZter") { X = 0, Y = 1, Width = Dim.Fill(), Height = Dim.Fill() };
+        var win = Themed(new Window { Title = "EZter", X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() });
 
-        var listFrame = new FrameView("Commands (Enter = open)") { X = 0, Y = 0, Width = 26, Height = Dim.Fill(1) };
-        _commandList = new ListView(_names) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
-        _commandList.OpenSelectedItem += args => OpenCommand(_names[args.Item]);
+        var listFrame = Themed(new FrameView { Title = "Commands (Enter = open)", X = 0, Y = 1, Width = 26, Height = Dim.Fill(1) });
+        _commandList = new ListView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _commandList.Accepting += (_, e) =>
+        {
+            if (_commandList.SelectedItem is int i && i < _names.Count) OpenCommand(_names[i]);
+            e.Handled = true;
+        };
         listFrame.Add(_commandList);
 
-        var form = new FrameView("Command") { X = 26, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1) };
-        _nameField = new TextField("") { X = 8, Y = 0, Width = 30 };
-        _descField = new TextField("") { X = 8, Y = 1, Width = Dim.Fill(1) };
+        var form = Themed(new FrameView { Title = "Command", X = 26, Y = 1, Width = Dim.Fill(), Height = Dim.Fill(1) });
+        _nameField = new TextField { X = 8, Y = 0, Width = 30 };
+        _descField = new TextField { X = 8, Y = 1, Width = Dim.Fill(1) };
 
-        var stepsFrame = new FrameView("Steps (Enter = edit)") { X = 0, Y = 3, Width = Dim.Fill(), Height = Dim.Fill(2) };
-        _stepList = new ListView(_stepLabels) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
-        _stepList.OpenSelectedItem += _ => EditSelectedStep();
+        var stepsFrame = Themed(new FrameView { Title = "Steps (Enter = edit)", X = 0, Y = 3, Width = Dim.Fill(), Height = Dim.Fill(2) });
+        _stepList = new ListView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _stepList.Accepting += (_, e) => { EditSelectedStep(); e.Handled = true; };
         stepsFrame.Add(_stepList);
 
-        var add = new Button("_Add") { X = 1, Y = Pos.AnchorEnd(1) };
-        add.Clicked += AddStep;
-        var edit = new Button("_Edit") { X = Pos.Right(add) + 1, Y = Pos.AnchorEnd(1) };
-        edit.Clicked += EditSelectedStep;
-        var remove = new Button("Re_move") { X = Pos.Right(edit) + 1, Y = Pos.AnchorEnd(1) };
-        remove.Clicked += RemoveStep;
-        var up = new Button("_Up") { X = Pos.Right(remove) + 1, Y = Pos.AnchorEnd(1) };
-        up.Clicked += () => MoveStep(-1);
-        var down = new Button("_Down") { X = Pos.Right(up) + 1, Y = Pos.AnchorEnd(1) };
-        down.Clicked += () => MoveStep(1);
-        var save = new Button("_Save") { X = Pos.Right(down) + 3, Y = Pos.AnchorEnd(1) };
-        save.Clicked += () => Save();
-        var run = new Button("_Run") { X = Pos.Right(save) + 1, Y = Pos.AnchorEnd(1) };
-        run.Clicked += RunCurrent;
+        var add = new Button { Text = "_Add", X = 1, Y = Pos.AnchorEnd(1) };
+        add.Accepted += (_, _) => AddStep();
+        var edit = new Button { Text = "_Edit", X = Pos.Right(add) + 1, Y = Pos.AnchorEnd(1) };
+        edit.Accepted += (_, _) => EditSelectedStep();
+        var remove = new Button { Text = "Re_move", X = Pos.Right(edit) + 1, Y = Pos.AnchorEnd(1) };
+        remove.Accepted += (_, _) => RemoveStep();
+        var up = new Button { Text = "_Up", X = Pos.Right(remove) + 1, Y = Pos.AnchorEnd(1) };
+        up.Accepted += (_, _) => MoveStep(-1);
+        var down = new Button { Text = "_Down", X = Pos.Right(up) + 1, Y = Pos.AnchorEnd(1) };
+        down.Accepted += (_, _) => MoveStep(1);
+        var save = new Button { Text = "_Save", X = Pos.Right(down) + 3, Y = Pos.AnchorEnd(1) };
+        save.Accepted += (_, _) => Save();
+        var run = new Button { Text = "_Run", X = Pos.Right(save) + 1, Y = Pos.AnchorEnd(1) };
+        run.Accepted += (_, _) => RunCurrent();
 
-        form.Add(new Label("Name:") { X = 1, Y = 0 }, _nameField,
-                 new Label("About:") { X = 1, Y = 1 }, _descField,
+        form.Add(new Label { Text = "Name:", X = 1, Y = 0 }, _nameField,
+                 new Label { Text = "About:", X = 1, Y = 1 }, _descField,
                  stepsFrame, add, edit, remove, up, down, save, run);
 
-        _status = new Label("") { X = 1, Y = Pos.AnchorEnd(1), Width = Dim.Fill() };
+        _status = new Label { Text = "", X = 1, Y = Pos.AnchorEnd(1), Width = Dim.Fill() };
 
-        win.Add(listFrame, form, _status);
-        top.Add(menu, win);
+        win.Add(menu, listFrame, form, _status);
+        return win;
     }
 
     static void SetStatus(string text) => _status.Text = text;
@@ -195,7 +204,7 @@ static class Editor
     static bool ConfirmDiscard()
     {
         if (!IsDirty()) return true;
-        return MessageBox.Query("Unsaved changes", "Save the changes to this command first?", "Save", "Discard", "Cancel") switch
+        return Query("Unsaved changes", "Save the changes to this command first?", "Save", "Discard", "Cancel") switch
         {
             0 => Save(),
             1 => true,
@@ -206,14 +215,14 @@ static class Editor
     static void RefreshCommands()
     {
         _names = Program.Store.Names().ToList();
-        _commandList.SetSource(_names);
+        _commandList.SetSource(new ObservableCollection<string>(_names));
     }
 
     static void RefreshSteps(int select)
     {
         _stepLabels.Clear();
         _stepLabels.AddRange(_current.Steps.Select(Describe));
-        _stepList.SetSource(_stepLabels);
+        _stepList.SetSource(new ObservableCollection<string>(_stepLabels));
         if (_stepLabels.Count > 0)
             _stepList.SelectedItem = Math.Clamp(select, 0, _stepLabels.Count - 1);
     }
@@ -225,7 +234,9 @@ static class Editor
         _ => $"[{step.Language}]  {FirstLine(step.Text)}  ({step.Text.Split('\n').Length} lines)",
     };
 
-    static NStack.ustring[] Labels(params string[] items) => items.Select(i => (NStack.ustring)i).ToArray();
+    static int Query(string title, string message, params string[] buttons) => MessageBox.Query(_app, title, message, buttons) ?? -1;
+
+    static int Fail(string title, string message, string ok = "OK") => MessageBox.ErrorQuery(_app, title, message, ok) ?? -1;
 
     static string FirstLine(string text) => text.Split('\n')[0].Trim();
 
@@ -259,22 +270,22 @@ static class Editor
 
         if (!CommandStore.IsValidName(name))
         {
-            MessageBox.ErrorQuery("Name", "Give the command a name: 1-40 characters, letters, digits, '-' or '_'.", "OK");
+            Fail("Name", "Give the command a name: 1-40 characters, letters, digits, '-' or '_'.", "OK");
             _nameField.SetFocus();
             return false;
         }
         if (Builtins.Table.ContainsKey(name))
         {
-            MessageBox.ErrorQuery("Name", $"'{name}' is a built-in EZ command. Pick another name.", "OK");
+            Fail("Name", $"'{name}' is a built-in EZ command. Pick another name.", "OK");
             return false;
         }
         if (_current.Steps.Count == 0)
         {
-            MessageBox.ErrorQuery("Steps", "Add at least one step first.", "OK");
+            Fail("Steps", "Add at least one step first.", "OK");
             return false;
         }
         if (name != _savedName && Program.Store.Names().Contains(name) &&
-            MessageBox.Query("Overwrite?", $"A command called '{name}' already exists. Replace it?", "Replace", "Cancel") != 0)
+            Query("Overwrite?", $"A command called '{name}' already exists. Replace it?", "Replace", "Cancel") != 0)
             return false;
 
         Program.Store.Save(_current);
@@ -296,7 +307,7 @@ static class Editor
             ResetForm(new CustomCommand());
             return;
         }
-        if (MessageBox.Query("Delete", $"Delete '{_savedName}'? 'ez {_savedName}' stops working too.", "Delete", "Cancel") != 0)
+        if (Query("Delete", $"Delete '{_savedName}'? 'ez {_savedName}' stops working too.", "Delete", "Cancel") != 0)
             return;
 
         Program.Store.Delete(_savedName);
@@ -307,7 +318,7 @@ static class Editor
 
     static void Quit()
     {
-        if (ConfirmDiscard()) Application.RequestStop();
+        if (ConfirmDiscard()) _app.RequestStop();
     }
 
     // ---- steps ----
@@ -316,7 +327,7 @@ static class Editor
     {
         var steps = StepDialog(null);
         if (steps == null) return;
-        int at = _current.Steps.Count == 0 ? 0 : _stepList.SelectedItem + 1;
+        int at = _current.Steps.Count == 0 ? 0 : (_stepList.SelectedItem ?? -1) + 1;
         _current.Steps.InsertRange(at, steps);
         RefreshSteps(at + steps.Count - 1);
     }
@@ -328,7 +339,7 @@ static class Editor
             AddStep();
             return;
         }
-        int at = _stepList.SelectedItem;
+        int at = _stepList.SelectedItem ?? 0;
         var steps = StepDialog(_current.Steps[at]);
         if (steps == null) return;
         _current.Steps.RemoveAt(at);
@@ -339,14 +350,14 @@ static class Editor
     static void RemoveStep()
     {
         if (_current.Steps.Count == 0) return;
-        int at = _stepList.SelectedItem;
+        int at = _stepList.SelectedItem ?? 0;
         _current.Steps.RemoveAt(at);
         RefreshSteps(at);
     }
 
     static void MoveStep(int direction)
     {
-        int at = _stepList.SelectedItem, to = at + direction;
+        int at = _stepList.SelectedItem ?? 0, to = at + direction;
         if (_current.Steps.Count == 0 || to < 0 || to >= _current.Steps.Count) return;
         (_current.Steps[at], _current.Steps[to]) = (_current.Steps[to], _current.Steps[at]);
         RefreshSteps(to);
@@ -355,45 +366,49 @@ static class Editor
     // Asks for a step. Several lines of an EZ or outside command become several steps.
     static List<Step>? StepDialog(Step? existing)
     {
-        var kind = new RadioGroup(Labels("EZ command", "Outside command", "Piece of code"))
+        var kind = new OptionSelector
         {
             X = 1, Y = 1,
-            SelectedItem = existing == null ? 0 : (int)existing.Kind,
+            Labels = new[] { "EZ command", "Outside command", "Piece of code" },
+            Value = existing == null ? 0 : (int)existing.Kind,
         };
         int languageIndex = existing == null ? 0 : Math.Max(0, Array.IndexOf(Ezc.Languages, existing.Language));
-        var language = new RadioGroup(Labels(Ezc.Languages)) { X = 30, Y = 1, SelectedItem = languageIndex };
+        var language = new OptionSelector { X = 30, Y = 1, Labels = Ezc.Languages, Value = languageIndex };
 
-        var text = new TextView
+        var text = Themed(new TextView
         {
             X = 1, Y = 8, Width = Dim.Fill(1), Height = Dim.Fill(1),
-            AllowsTab = false,
+            TabKeyAddsTab = false,
             Text = existing?.Text ?? "",
-            ColorScheme = Scheme(Color.White, Color.Black, Color.Blue, Color.White, Color.Black),
-        };
+        });
 
         bool accepted = false;
-        var ok = new Button("_OK", true);
-        ok.Clicked += () => { accepted = true; Application.RequestStop(); };
-        var cancel = new Button("_Cancel");
-        cancel.Clicked += () => Application.RequestStop();
+        var ok = new Button { Text = "_OK", IsDefault = true };
+        ok.Accepted += (_, _) => { accepted = true; _app.RequestStop(); };
+        var cancel = new Button { Text = "_Cancel" };
+        cancel.Accepted += (_, _) => _app.RequestStop();
 
-        var dialog = new Dialog(existing == null ? "Add step" : "Edit step", 80, 28, ok, cancel);
+        var dialog = Themed(new Dialog
+        {
+            Title = existing == null ? "Add step" : "Edit step", Width = 80, Height = 28,
+            Buttons = new[] { ok, cancel },
+        });
         dialog.Add(
-            new Label("Step type:") { X = 1, Y = 0 }, kind,
-            new Label("Language (code only):") { X = 30, Y = 0 }, language,
-            new Label("Content ($1, $2 ... are arguments; Tab moves to the next field):") { X = 1, Y = 7 },
+            new Label { Text = "Step type:", X = 1, Y = 0 }, kind,
+            new Label { Text = "Language (code only):", X = 30, Y = 0 }, language,
+            new Label { Text = "Content ($1, $2 ... are arguments; Tab moves to the next field):", X = 1, Y = 7 },
             text);
-        Application.Run(dialog);
+        _app.Run(dialog);
 
         if (!accepted) return null;
 
         var content = text.Text.ToString()!.ReplaceLineEndings("\n");
         if (content.Trim().Length == 0) return null;
 
-        if (kind.SelectedItem == 2)
-            return new List<Step> { new(StepKind.Code, content.TrimEnd(), Ezc.Languages[language.SelectedItem]) };
+        if (kind.Value == 2)
+            return new List<Step> { new(StepKind.Code, content.TrimEnd(), Ezc.Languages[language.Value ?? 0]) };
 
-        var stepKind = kind.SelectedItem == 0 ? StepKind.Ez : StepKind.Shell;
+        var stepKind = kind.Value == 0 ? StepKind.Ez : StepKind.Shell;
         return content.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(line => new Step(stepKind, line))
             .ToList();
@@ -449,30 +464,30 @@ static class Editor
     static string? Ask(string title, string prompt, string initial)
     {
         bool accepted = false;
-        var field = new TextField(initial) { X = 1, Y = 1, Width = Dim.Fill(1) };
-        var ok = new Button("_OK", true);
-        ok.Clicked += () => { accepted = true; Application.RequestStop(); };
-        var cancel = new Button("_Cancel");
-        cancel.Clicked += () => Application.RequestStop();
+        var field = new TextField { Text = initial, X = 1, Y = 1, Width = Dim.Fill(1) };
+        var ok = new Button { Text = "_OK", IsDefault = true };
+        ok.Accepted += (_, _) => { accepted = true; _app.RequestStop(); };
+        var cancel = new Button { Text = "_Cancel" };
+        cancel.Accepted += (_, _) => _app.RequestStop();
 
-        var dialog = new Dialog(title, 60, 8, ok, cancel);
-        dialog.Add(new Label(prompt) { X = 1, Y = 0 }, field);
+        var dialog = Themed(new Dialog { Title = title, Width = 60, Height = 8, Buttons = new[] { ok, cancel } });
+        dialog.Add(new Label { Text = prompt, X = 1, Y = 0 }, field);
         field.SetFocus();
-        Application.Run(dialog);
+        _app.Run(dialog);
         return accepted ? field.Text.ToString() : null;
     }
 
     static void ShowText(string title, string content)
     {
-        var ok = new Button("_OK", true);
-        ok.Clicked += () => Application.RequestStop();
-        var dialog = new Dialog(title, 90, 28, ok);
-        dialog.Add(new TextView
+        var ok = new Button { Text = "_OK", IsDefault = true };
+        ok.Accepted += (_, _) => _app.RequestStop();
+        var dialog = Themed(new Dialog { Title = title, Width = 90, Height = 28, Buttons = new[] { ok } });
+        dialog.Add(Themed(new TextView
         {
             X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1),
             ReadOnly = true, Text = content,
-        });
-        Application.Run(dialog);
+        }));
+        _app.Run(dialog);
     }
 
     static void ShowHelp() => ShowText("About steps", """
@@ -495,7 +510,7 @@ static class Editor
     {
         if (Shims.IsOnPath() || Shims.PromptDisabled) return;
 
-        int answer = MessageBox.Query("Add EZ to PATH?",
+        int answer = Query("Add EZ to PATH?",
             "Add EZter to your PATH so your commands work in any normal terminal?\n\n" +
             "Every command is run as \"ez [command]\" (ez hi, ez time, ez ls ...).\n" +
             "This only changes your own user account.",
